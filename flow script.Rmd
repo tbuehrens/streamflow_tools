@@ -1,7 +1,6 @@
 ---
 title: "MARSS Model to Iterpolate Missing Streamflow Observations"
 author: "Thomas Buehrens"
-date: "2022-11-05"
 output:
   html_document:
     code_folding: hide
@@ -14,6 +13,12 @@ output:
     toc: yes
     toc_depth: '3'
 ---
+
+***
+
+Last Updated `r format(Sys.time(), '%m/%d/%Y')`.
+
+***
 
 
 ## Setup
@@ -42,7 +47,7 @@ install_or_load_pack(packages_list)
 ```
 
 ## Flow Data
-Get Naselle and Grays flow data
+Here we'll grab some streamflow data from Southwest Washington
 ```{r message = FALSE, warning = FALSE,results = "hide"}
 naselle<-get_USGS_data(flow_site =12010000, #Naselle
                         flow_params ="discharge",
@@ -101,7 +106,22 @@ flow_dat<-naselle%>%
               )%>%
   group_by(river,date)%>%
   summarise(flow_cfs=mean(flow_cfs),.groups = "keep")%>%
-  ungroup()%>%
+  ungroup()
+```
+
+## Plot Flow Data
+```{r message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 1. Observed flow (cfs) by river."}
+ggplot(flow_dat,aes(x=date,y = flow_cfs,color=river),alpha=0.5)+
+  geom_point(size=0.3)+
+  facet_wrap(~river,scales = "free_y")+
+  scale_y_log10()+
+  theme_bw()+
+  annotation_logticks(sides = "l") 
+```
+
+## Plot Flow Anomalies
+```{r message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 2. Observed z-scored logged flow (anomalies) by river."}
+flow_dat<-flow_dat%>%
   group_by(river)%>%
   mutate(zl_flow_cfs=as.vector(scale(log(flow_cfs))))%>%
   ungroup()#%>%
@@ -111,26 +131,23 @@ flow_dat<-naselle%>%
   # group_by(river)%>%
   # mutate(zl_flow_cfs=as.vector(scale(log(flow_cfs))))
   
-  flow_dat%>%group_by(river)%>%summarize(min_zl_flow=min(zl_flow_cfs),
-                                         min_flow=min(flow_cfs)
-                                         )
-  
-```
+  # flow_dat%>%group_by(river)%>%summarize(min_zl_flow=min(zl_flow_cfs),
+  #                                        min_flow=min(flow_cfs)
+  #                                        )
 
-## Plot Flow Data
-```{r message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 1. Observed z-scored logged flow by river."}
 ggplot(flow_dat,aes(x=date,y = zl_flow_cfs,color=river),alpha=0.5)+
   geom_point(size=0.3)
 ```
 
 ## MARSS Model 
+Here we use a [MARSS model](https://cran.r-project.org/web/packages/MARSS/citation.html) to interpolate missing or bad flow data.
 ```{r  message = FALSE, warning = FALSE,results = "hide"}
 marss_dat<-flow_dat%>%
   dplyr::select(river,date,zl_flow_cfs)%>%
   pivot_wider(names_from = river,values_from = zl_flow_cfs,id_cols=date)%>%
   arrange(date)%>%
   mutate(jdate=julian(date))%>%
-  filter(year(date)>2020)
+  filter(year(date)>2015 & year(date) <= 2017)
 
 all_dates<-tibble(jdate=julian(min(marss_dat$date)):julian(max(marss_dat$date)))
 
@@ -146,7 +163,7 @@ marss_mat<-marss_dat%>%
 model=list(
  Q= "equalvarcov",#"unconstrained"
  R= "diagonal and equal",
- U= matrix(rep(0,5),5,1)
+ U= matrix(rep(0,nrow(marss_mat)),nrow=nrow(marss_mat),1)
 )
 fit=MARSS(marss_mat, model=model)
 
@@ -161,13 +178,33 @@ marss_dat<-marss_dat%>%
   mutate(river=gsub("mle_","",river))%>%
   pivot_wider(values_from =value,names_from = type)%>%
   arrange(river,date)
-#write.csv(marss_dat,"marss_dat.csv")
+
+scale_params<-flow_dat%>%
+  group_by(river)%>%
+  summarise(mu_l=mean(log(flow_cfs)),
+            sd_l=sd(log(flow_cfs))
+  )
+
+marss_dat<-marss_dat%>%
+  ungroup()%>%
+  left_join(scale_params)%>%
+  mutate(mle_rescaled=exp(mle*sd_l+mu_l))%>%
+  left_join(flow_dat%>%
+              dplyr::select(date,river,flow_cfs)
+              )
+
+write.csv(marss_dat,"marss_dat.csv")
 ```
 
 ## Plot Flow Data with MARSS Predictions
-```{r  message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 2: Comparison of Observed z-scored logged flow vs. MARSS fits"}
-ggplot(marss_dat,aes(x=date,y=mle,group=river))+
-  geom_line(color="cadetblue")+
-  geom_point(aes(y=obs),size=0.1)+
-  facet_wrap(~river)
+```{r  message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 3: Comparison of Observed flow vs. re-scaled MARSS fits"}
+ggplot(marss_dat,aes(x=date,y=mle_rescaled,color=river))+
+  geom_line()+
+  geom_point(aes(y=flow_cfs),size=0.6,color="black")+
+  facet_wrap(~river, scales = "free_y")+
+  scale_y_log10()+
+  ylab("flow (cfs)")+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme_bw()+
+  annotation_logticks(sides = "l") 
 ```

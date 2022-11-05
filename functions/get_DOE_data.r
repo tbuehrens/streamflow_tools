@@ -62,7 +62,7 @@ get_DOE_data<-function(begin_date,end_date,flow_site,flow_params,daily_or_instan
             bind_rows(tdat)
         }
       }
-    )
+    ,silent = T)
   }
   flow_dat<-flow_dat%>%
     filter(date>=ymd(begin_date) & date <= ymd(end_date))
