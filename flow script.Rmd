@@ -26,8 +26,8 @@ set.seed(123)
 
 We also need a couple of helper functions which we will load from the functions folder, which we will load using the walk() function from the purrr package (which we will install if it is not already installed).
 ```{r load_funcs, message = FALSE, warning = FALSE,results = "hide"}
-wd_functions<-"/functions"
-sapply(FUN = source, paste(wd_functions, list.files(wd_functions), sep="/"))
+wd_functions<-"functions"
+sapply(FUN = source, paste(here::here(),wd_functions, list.files(wd_functions), sep="/"))
 ```
 
 Here we will load & install packages we need to use (needs internet connection if packages not already installed)
@@ -37,7 +37,7 @@ packages_list<-c("MARSS",
                  "lubridate", 
                  "kableExtra",
                  "dataRetrieval"
-                 ) #BTSPAS loads separately
+                 ) 
 install_or_load_pack(packages_list)
 ```
 

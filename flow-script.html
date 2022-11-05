@@ -1608,134 +1608,27 @@ Streamflow Observations</h1>
 
 <div id="setup" class="section level2">
 <h2>Setup</h2>
-<pre class="r"><code>#==========================================
-#function to install or load packages
-#==========================================
-install_or_load_pack &lt;- function(pack){
-  create.pkg &lt;- pack[!(pack %in% installed.packages()[, &quot;Package&quot;])]
-  if (length(create.pkg))
-    install.packages(create.pkg, dependencies = TRUE)
-  sapply(pack, require, character.only = TRUE)
-}
-
-#===============================
-# function to get USGS flow data
-#===============================
-get_USGS_data&lt;-function(flow_site,flow_params,daily_or_instantaneous,begin_date,end_date){
-  flow_params_lookup&lt;-tibble(flow_params=c(&quot;discharge&quot;,&quot;stage_height&quot;),
-                       param_codes=c(&quot;00060&quot;,&quot;00065&quot;))%&gt;%
-    right_join(tibble(&quot;flow_params&quot;=flow_params))%&gt;%
-    dplyr::select(param_codes)%&gt;%
-    as.vector()%&gt;%
-    unlist()
-  
-  names_lookup_daily&lt;-c(&quot;Date&quot; = &quot;date&quot;,&quot;Flow&quot; =&quot;flow_cfs&quot;,&quot;GH&quot; =&quot;stage_height&quot;)
-  names_lookup_inst&lt;-c(&quot;Date&quot; =&quot;date&quot;,&quot;Flow_Inst&quot;=&quot;flow_cfs&quot;,&quot;GH_Inst&quot; =&quot;stage_height&quot; )                    
-  
-  if(daily_or_instantaneous==&quot;daily&quot;){
-    tdat&lt;- readNWISdv(siteNumber=flow_site,
-                parameterCd = flow_params_lookup, 
-                startDate = begin_date,
-                endDate = end_date, 
-                statCd = &quot;00003&quot;)%&gt;%
-      renameNWISColumns()%&gt;%
-      as_tibble()%&gt;%
-      rename_with(.fn = ~names_lookup_daily[.x], .cols = intersect(names(.), names(names_lookup_daily)))
-  }else{
-    tdat &lt;- readNWISuv(siteNumber = flow_site,
-                       parameterCd = flow_params_lookup,
-                       startDate =begin_date,
-                       endDate = end_date)%&gt;%
-      renameNWISColumns()%&gt;%
-      as_tibble()%&gt;%
-      rename_with(.fn = ~names_lookup_inst[.x], .cols = intersect(names(.), names(names_lookup_inst)))
-  }
-  return(tdat)
-}
-
-#====================================
-# function to get ecology flow data
-#==================================
-get_DOE_data&lt;-function(begin_date,end_date,flow_site,flow_params,daily_or_instantaneous){
-
-  begin_year = ifelse(month(begin_date) &lt; 10, year(begin_date)-1,year(begin_date)) #by water year
-  end_year = year(end_date)
-  years&lt;-c(begin_year:end_year)
-  
-  flow_params_lookup&lt;-tibble(flow_params=c(&quot;discharge&quot;,&quot;stage_height&quot;),
-                       param_codes=c(&quot;DSG&quot;,&quot;STG&quot;))%&gt;%
-    right_join(tibble(&quot;flow_params&quot;=flow_params))%&gt;%
-    dplyr::select(param_codes)%&gt;%
-    as.vector()%&gt;%
-    unlist()
-  
-  daily_inst_lookup&lt;-tibble(daily_or_instantaneous=c(&quot;daily&quot;,&quot;instantaneous&quot;),
-                       param_codes=c(&quot;DV&quot;,&quot;FM&quot;))%&gt;%
-    right_join(tibble(&quot;daily_or_instantaneous&quot;=daily_or_instantaneous))%&gt;%
-    dplyr::select(param_codes)%&gt;%
-    as.vector()%&gt;%
-    unlist()
-  
-  
-  names_lookup&lt;-c(&quot;DATE&quot; = &quot;date&quot;,&quot;TIME&quot; = &quot;time&quot;, &quot;Discharge(cfs)&quot; =&quot;flow_cfs&quot;,&quot;Stage(ft.)&quot; =&quot;stage_height&quot;, &quot;STAGE(ft.)&quot; =&quot;stage_height&quot;, `FLOW(cfs)` = &quot;flow_cfs&quot;,&quot;QUALITY&quot; = &quot;quality&quot;)
-  
-  flow_dat&lt;-NULL
-  
-  for(i in years){
-    url&lt;-paste0(&quot;https://apps.ecology.wa.gov/ContinuousFlowAndWQ/StationData/Prod/&quot;,flow_site,&quot;/&quot;,flow_site,&quot;_&quot;,i,&quot;_&quot;,flow_params_lookup,&quot;_&quot;,daily_inst_lookup,&quot;.TXT&quot;)
-    try(
-    if(i==min(years)){
-      names&lt;-grep(&quot;DATE&quot;,read_lines(url,skip_empty_rows = T),invert=F,value=T)%&gt;%
-        str_split(&quot;  &quot;)%&gt;%
-        as_vector()
-      names = names[names!=&quot;&quot;]
-      names&lt;-as.vector(gsub(&quot;\\s&quot;, &quot;&quot;, names))
-      flow_dat&lt;-grep(&quot;/20&quot;,read_lines(url,skip_empty_rows = T),invert=F,value=T)%&gt;%
-        read_table(na=&quot; &quot;,col_names = F)%&gt;%
-        set_names(names)%&gt;%
-        filter(QUALITY %in% c(1,2,3,10))%&gt;%
-        rename_with(.fn = ~names_lookup[.x], .cols = intersect(names(.), names(names_lookup)))%&gt;%
-        mutate(date = mdy(date))%&gt;%
-        mutate(across(any_of(c(&quot;stage_height&quot;,&quot;flow_cfs&quot;,&quot;quality&quot;)),~as.numeric(.)))
-    }else{
-      names&lt;-grep(&quot;DATE&quot;,read_lines(url,skip_empty_rows = T),invert=F,value=T)%&gt;%
-        str_split(&quot;  &quot;)%&gt;%
-        as_vector()
-      names = names[names!=&quot;&quot;]
-      names&lt;-as.vector(gsub(&quot;\\s&quot;, &quot;&quot;, names))
-      tdat&lt;-grep(&quot;/20&quot;,read_lines(url,skip_empty_rows = T),invert=F,value=T)%&gt;%
-        read_table(na=&quot; &quot;,col_names = F)%&gt;%
-        set_names(names)%&gt;%
-        filter(QUALITY %in% c(1,2,3,10))%&gt;%
-        rename_with(.fn = ~names_lookup[.x], .cols = intersect(names(.), names(names_lookup)))%&gt;%
-        mutate(date = mdy(date))%&gt;%
-        mutate(across(any_of(c(&quot;stage_height&quot;,&quot;flow_cfs&quot;,&quot;quality&quot;)),~as.numeric(.)))
-      if(is.null(flow_dat)){
-        flow_dat&lt;-tdat
-      }else{
-        flow_dat&lt;-flow_dat%&gt;%
-          bind_rows(tdat)
-      }
-    }
-    )
-  }
-  flow_dat&lt;-flow_dat%&gt;%
-    filter(date&gt;=ymd(begin_date) &amp; date &lt;= ymd(end_date))
-  return(flow_dat)
-}
-
-packages_list&lt;-c(&quot;MARSS&quot;,
+<p>All analyses require R software <a href="https://cran.r-project.org/"><strong>(link)</strong></a> (v3.4.3)
+for data retrieval, data processing, and summarizing model results. Here
+we configure R to perform our analysis and generate our outputs</p>
+<pre class="r"><code>options(width = 100)
+knitr::opts_chunk$set(message = FALSE)
+set.seed(123)</code></pre>
+<p>We also need a couple of helper functions which we will load from the
+functions folder, which we will load using the walk() function from the
+purrr package (which we will install if it is not already
+installed).</p>
+<pre class="r"><code>wd_functions&lt;-&quot;functions&quot;
+sapply(FUN = source, paste(here::here(),wd_functions, list.files(wd_functions), sep=&quot;/&quot;))</code></pre>
+<p>Here we will load &amp; install packages we need to use (needs
+internet connection if packages not already installed)</p>
+<pre class="r"><code>packages_list&lt;-c(&quot;MARSS&quot;,
                  &quot;tidyverse&quot;,
                  &quot;lubridate&quot;, 
                  &quot;kableExtra&quot;,
                  &quot;dataRetrieval&quot;
-                 ) #BTSPAS loads separately
+                 ) 
 install_or_load_pack(packages_list)</code></pre>
-<pre><code>## Warning: package &#39;MARSS&#39; was built under R version 4.2.2</code></pre>
-<pre><code>## Warning in !is.null(rmarkdown::metadata$output) &amp;&amp; rmarkdown::metadata$output
-## %in% : &#39;length(x) = 2 &gt; 1&#39; in coercion to &#39;logical(1)&#39;</code></pre>
-<pre><code>##         MARSS     tidyverse     lubridate    kableExtra dataRetrieval 
-##          TRUE          TRUE          TRUE          TRUE          TRUE</code></pre>
 </div>
 <div id="flow-data" class="section level2">
 <h2>Flow Data</h2>
