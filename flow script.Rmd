@@ -15,124 +15,23 @@ output:
     toc_depth: '3'
 ---
 
+
 ## Setup
-```{r setup, set_options, echo = TRUE, message = FALSE}
-#==========================================
-#function to install or load packages
-#==========================================
-install_or_load_pack <- function(pack){
-  create.pkg <- pack[!(pack %in% installed.packages()[, "Package"])]
-  if (length(create.pkg))
-    install.packages(create.pkg, dependencies = TRUE)
-  sapply(pack, require, character.only = TRUE)
-}
+All analyses require R software [**(link)**](https://cran.r-project.org/) (v3.4.3) for data retrieval, data processing, and summarizing model results. Here we configure R to perform our analysis and generate our outputs
+```{r set_options, echo = TRUE, message = FALSE}
+options(width = 100)
+knitr::opts_chunk$set(message = FALSE)
+set.seed(123)
+```
 
-#===============================
-# function to get USGS flow data
-#===============================
-get_USGS_data<-function(flow_site,flow_params,daily_or_instantaneous,begin_date,end_date){
-  flow_params_lookup<-tibble(flow_params=c("discharge","stage_height"),
-                       param_codes=c("00060","00065"))%>%
-    right_join(tibble("flow_params"=flow_params))%>%
-    dplyr::select(param_codes)%>%
-    as.vector()%>%
-    unlist()
-  
-  names_lookup_daily<-c("Date" = "date","Flow" ="flow_cfs","GH" ="stage_height")
-  names_lookup_inst<-c("Date" ="date","Flow_Inst"="flow_cfs","GH_Inst" ="stage_height" )                    
-  
-  if(daily_or_instantaneous=="daily"){
-    tdat<- readNWISdv(siteNumber=flow_site,
-                parameterCd = flow_params_lookup, 
-                startDate = begin_date,
-                endDate = end_date, 
-                statCd = "00003")%>%
-      renameNWISColumns()%>%
-      as_tibble()%>%
-      rename_with(.fn = ~names_lookup_daily[.x], .cols = intersect(names(.), names(names_lookup_daily)))
-  }else{
-    tdat <- readNWISuv(siteNumber = flow_site,
-                       parameterCd = flow_params_lookup,
-                       startDate =begin_date,
-                       endDate = end_date)%>%
-      renameNWISColumns()%>%
-      as_tibble()%>%
-      rename_with(.fn = ~names_lookup_inst[.x], .cols = intersect(names(.), names(names_lookup_inst)))
-  }
-  return(tdat)
-}
+We also need a couple of helper functions which we will load from the functions folder, which we will load using the walk() function from the purrr package (which we will install if it is not already installed).
+```{r load_funcs, message = FALSE, warning = FALSE,results = "hide"}
+wd_functions<-"../functions"
+sapply(FUN = source, paste(wd_functions, list.files(wd_functions), sep="/"))
+```
 
-#====================================
-# function to get ecology flow data
-#==================================
-get_DOE_data<-function(begin_date,end_date,flow_site,flow_params,daily_or_instantaneous){
-
-  begin_year = ifelse(month(begin_date) < 10, year(begin_date)-1,year(begin_date)) #by water year
-  end_year = year(end_date)
-  years<-c(begin_year:end_year)
-  
-  flow_params_lookup<-tibble(flow_params=c("discharge","stage_height"),
-                       param_codes=c("DSG","STG"))%>%
-    right_join(tibble("flow_params"=flow_params))%>%
-    dplyr::select(param_codes)%>%
-    as.vector()%>%
-    unlist()
-  
-  daily_inst_lookup<-tibble(daily_or_instantaneous=c("daily","instantaneous"),
-                       param_codes=c("DV","FM"))%>%
-    right_join(tibble("daily_or_instantaneous"=daily_or_instantaneous))%>%
-    dplyr::select(param_codes)%>%
-    as.vector()%>%
-    unlist()
-  
-  
-  names_lookup<-c("DATE" = "date","TIME" = "time", "Discharge(cfs)" ="flow_cfs","Stage(ft.)" ="stage_height", "STAGE(ft.)" ="stage_height", `FLOW(cfs)` = "flow_cfs","QUALITY" = "quality")
-  
-  flow_dat<-NULL
-  
-  for(i in years){
-    url<-paste0("https://apps.ecology.wa.gov/ContinuousFlowAndWQ/StationData/Prod/",flow_site,"/",flow_site,"_",i,"_",flow_params_lookup,"_",daily_inst_lookup,".TXT")
-    try(
-    if(i==min(years)){
-      names<-grep("DATE",read_lines(url,skip_empty_rows = T),invert=F,value=T)%>%
-        str_split("  ")%>%
-        as_vector()
-      names = names[names!=""]
-      names<-as.vector(gsub("\\s", "", names))
-      flow_dat<-grep("/20",read_lines(url,skip_empty_rows = T),invert=F,value=T)%>%
-        read_table(na=" ",col_names = F)%>%
-        set_names(names)%>%
-        filter(QUALITY %in% c(1,2,3,10))%>%
-        rename_with(.fn = ~names_lookup[.x], .cols = intersect(names(.), names(names_lookup)))%>%
-        mutate(date = mdy(date))%>%
-        mutate(across(any_of(c("stage_height","flow_cfs","quality")),~as.numeric(.)))
-    }else{
-      names<-grep("DATE",read_lines(url,skip_empty_rows = T),invert=F,value=T)%>%
-        str_split("  ")%>%
-        as_vector()
-      names = names[names!=""]
-      names<-as.vector(gsub("\\s", "", names))
-      tdat<-grep("/20",read_lines(url,skip_empty_rows = T),invert=F,value=T)%>%
-        read_table(na=" ",col_names = F)%>%
-        set_names(names)%>%
-        filter(QUALITY %in% c(1,2,3,10))%>%
-        rename_with(.fn = ~names_lookup[.x], .cols = intersect(names(.), names(names_lookup)))%>%
-        mutate(date = mdy(date))%>%
-        mutate(across(any_of(c("stage_height","flow_cfs","quality")),~as.numeric(.)))
-      if(is.null(flow_dat)){
-        flow_dat<-tdat
-      }else{
-        flow_dat<-flow_dat%>%
-          bind_rows(tdat)
-      }
-    }
-    )
-  }
-  flow_dat<-flow_dat%>%
-    filter(date>=ymd(begin_date) & date <= ymd(end_date))
-  return(flow_dat)
-}
-
+Here we will load & install packages we need to use (needs internet connection if packages not already installed)
+```{r load_packages, message = FALSE, warning = FALSE,results = "hide"}
 packages_list<-c("MARSS",
                  "tidyverse",
                  "lubridate", 
