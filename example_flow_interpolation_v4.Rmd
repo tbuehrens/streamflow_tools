@@ -1,0 +1,222 @@
+---
+title: "MARSS Model to Iterpolate Missing Streamflow Observations"
+author: "Thomas Buehrens"
+output:
+  html_document:
+    code_folding: hide
+    fig_caption: yes
+    theme: cerulean
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+***
+
+Last Updated `r format(Sys.time(), '%m/%d/%Y')`.
+
+***
+
+
+## Setup
+All analyses require R software [**(link)**](https://cran.r-project.org/) (v3.4.3) for data retrieval, data processing, and summarizing model results. Here we configure R to perform our analysis and generate our outputs
+```{r set_options, echo = TRUE, message = FALSE}
+options(width = 100)
+knitr::opts_chunk$set(message = FALSE)
+set.seed(123)
+```
+
+We also need a couple of helper functions which we will load from the functions folder.
+```{r load_funcs, message = FALSE, warning = FALSE,results = "hide"}
+wd_functions<-"functions"
+sapply(FUN = source, paste(here::here(),wd_functions, list.files(wd_functions), sep="/"))
+```
+
+Here we will load & install packages we need to use (needs internet connection if packages not already installed)
+```{r load_packages, message = FALSE, warning = FALSE,results = "hide"}
+packages_list<-c("MARSS",
+                 "tidyverse",
+                 "lubridate", 
+                 "kableExtra",
+                 "dataRetrieval"
+                 ) 
+install_or_load_pack(packages_list)
+```
+
+## Flow Data
+Here we'll grab some streamflow data from Southwest Washington
+```{r message = FALSE, warning = FALSE,results = "hide"}
+naselle<-get_USGS_data(flow_site =12010000, #Naselle
+                        flow_params ="discharge",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+grays<-get_DOE_data(flow_site ="25B060", #Grays
+                        flow_params ="discharge",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+elochoman<-get_DOE_data(flow_site ="25C060", #Elochoman
+                        flow_params ="discharge",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+abernathy<-get_DOE_data(flow_site ="25E060", #Abernathy
+                        flow_params ="discharge",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+chehalis_doty<-get_USGS_data(flow_site ="12020000", #Chehalis_doty
+                        flow_params ="discharge",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+grays_stg<-get_DOE_data(flow_site ="25B060", #Grays
+                        flow_params ="stage_height",
+                        daily_or_instantaneous= "daily",
+                        begin_date = "2002-10-01",
+                        end_date = "2022-09-30"
+                        )
+
+
+flow_dat<-naselle%>%
+  dplyr::select(date,flow_cfs)%>%
+  mutate(river="naselle")%>%
+  bind_rows(grays%>%
+              dplyr::select(date,flow_cfs)%>%
+              mutate(river="grays")
+              )%>%
+  bind_rows(elochoman%>%
+              dplyr::select(date,flow_cfs)%>%
+              mutate(river="elochoman")
+              )%>%
+  bind_rows(abernathy%>%
+              dplyr::select(date,flow_cfs)%>%
+              mutate(river="abernathy")
+              )%>%
+  bind_rows(chehalis_doty%>%
+              dplyr::select(date,flow_cfs)%>%
+              mutate(river="chehalis_doty")
+              )%>%
+  bind_rows(grays_stg%>%
+              dplyr::select(date,flow_cfs=stage_height)%>%
+              mutate(river="grays_stg")
+              )%>%
+  group_by(river,date)%>%
+  summarise(flow_cfs=mean(flow_cfs),.groups = "keep")%>%
+  ungroup()
+```
+
+## Plot Flow Data
+```{r message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 1. Observed flow (cfs) by river."}
+ggplot(flow_dat,aes(x=date,y = flow_cfs,color=river),alpha=0.5)+
+  geom_point(size=0.3)+
+  facet_wrap(~river,scales = "free_y")+
+  scale_y_log10()+
+  theme_bw()+
+  annotation_logticks(sides = "l") 
+```
+
+## Plot Flow Anomalies
+```{r message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 2. Observed z-scored logged flow (anomalies) by river."}
+flow_dat<-flow_dat%>%
+  group_by(river)%>%
+  mutate(l_flow_cfs=as.vector(log(flow_cfs)))%>%
+  ungroup()%>%
+  mutate(flow_cfs=ifelse(river=="grays" & date > ymd("2022-01-07") | river=="grays" & flow_cfs < 30 ,NA,flow_cfs),
+         )%>%
+  filter(!is.na(flow_cfs))%>%
+  group_by(river)%>%
+  mutate(l_flow_cfs=as.vector(log(flow_cfs)))
+  
+  # flow_dat%>%group_by(river)%>%summarize(min_zl_flow=min(zl_flow_cfs),
+  #                                        min_flow=min(flow_cfs)
+  #                                        )
+
+ggplot(flow_dat,aes(x=date,y = l_flow_cfs,color=river),alpha=0.5)+
+  geom_point(size=0.3)
+```
+
+## MARSS Model 
+Here we use a [MARSS model](https://cran.r-project.org/web/packages/MARSS/citation.html) to interpolate missing or bad flow data.
+```{r  message = FALSE, warning = FALSE,results = "show"}
+marss_dat<-flow_dat%>%
+  dplyr::select(river,date,l_flow_cfs)%>%
+  pivot_wider(names_from = river,values_from = l_flow_cfs,id_cols=date)%>%
+  arrange(date)%>%
+  mutate(jdate=julian(date))%>%
+  filter(year(date)>2018)
+
+all_dates<-tibble(jdate=julian(min(marss_dat$date)):julian(max(marss_dat$date)))
+
+marss_dat<-all_dates%>%
+  left_join(marss_dat)
+
+marss_mat<-marss_dat%>%
+  dplyr::select(-c(date,jdate))%>%
+  as.matrix()%>%
+  t()
+
+
+model=list(
+ Q= "unconstrained",#"equalvarcov",
+ R= diag(rep(0,nrow(marss_mat))),#"diagonal and equal","diagonal and unequal",
+ U= matrix(rep(0,nrow(marss_mat)),nrow=nrow(marss_mat),1)
+)
+fit=MARSS(marss_mat, model=model,control=list(maxit=2000,allow.degen=T))
+
+
+fitted<-t(fit$states)
+colnames(fitted)<-gsub("X.","mle_",colnames(fitted))
+
+marss_dat<-marss_dat%>%
+  dplyr::select(-jdate)%>%
+  bind_cols(fitted)%>%
+  pivot_longer(cols=c(everything(),-date),names_to = "river")%>%
+  mutate(type=ifelse(grepl("mle_",river),"mle","obs"))%>%
+  mutate(river=gsub("mle_","",river))%>%
+  pivot_wider(values_from =value,names_from = type)%>%
+  arrange(river,date)
+
+# scale_params<-flow_dat%>%
+#   group_by(river)%>%
+#   summarise(mu_l=mean(log(flow_cfs)),
+#             sd_l=sd(log(flow_cfs))
+#   )
+
+marss_dat<-marss_dat%>%
+  ungroup()%>%
+  #left_join(scale_params)%>%
+  mutate(mle_rescaled=exp(mle))%>%
+  left_join(flow_dat%>%
+              dplyr::select(date,river,flow_cfs)
+              )
+
+write.csv(marss_dat,"marss_dat_log.csv",row.names = F)
+```
+
+## Plot Flow Data with MARSS Predictions
+```{r  message = FALSE, warning = FALSE,results = "show", fig.show=TRUE,fig.cap="Figure 3: Comparison of Observed flow vs. re-scaled MARSS fits"}
+ggplot(marss_dat,aes(x=date,y=mle_rescaled,color=river))+
+  geom_line()+
+  geom_point(aes(y=flow_cfs),size=0.6,color="black")+
+  facet_wrap(~river, scales = "free_y")+
+  scale_y_log10()+
+  ylab("flow (cfs)")+
+  theme(axis.text.x = element_text(angle = 90))+
+  theme_bw()+
+  annotation_logticks(sides = "l") 
+```
