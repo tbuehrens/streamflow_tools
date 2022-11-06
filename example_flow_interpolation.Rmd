@@ -124,12 +124,12 @@ ggplot(flow_dat,aes(x=date,y = flow_cfs,color=river),alpha=0.5)+
 flow_dat<-flow_dat%>%
   group_by(river)%>%
   mutate(zl_flow_cfs=as.vector(scale(log(flow_cfs))))%>%
-  ungroup()#%>%
-  # mutate(flow_cfs=ifelse(river=="grays" & zl_flow_cfs <= -2,NA,flow_cfs),
-  #        )%>%
-  # filter(!is.na(flow_cfs))%>%
-  # group_by(river)%>%
-  # mutate(zl_flow_cfs=as.vector(scale(log(flow_cfs))))
+  ungroup()%>%
+  mutate(flow_cfs=ifelse(river=="grays" & zl_flow_cfs <= -2,NA,flow_cfs),
+         )%>%
+  filter(!is.na(flow_cfs))%>%
+  group_by(river)%>%
+  mutate(zl_flow_cfs=as.vector(scale(log(flow_cfs))))
   
   # flow_dat%>%group_by(river)%>%summarize(min_zl_flow=min(zl_flow_cfs),
   #                                        min_flow=min(flow_cfs)
@@ -147,7 +147,7 @@ marss_dat<-flow_dat%>%
   pivot_wider(names_from = river,values_from = zl_flow_cfs,id_cols=date)%>%
   arrange(date)%>%
   mutate(jdate=julian(date))%>%
-  filter(year(date)>2019)
+  filter(year(date)>2018)
 
 all_dates<-tibble(jdate=julian(min(marss_dat$date)):julian(max(marss_dat$date)))
 
@@ -161,11 +161,11 @@ marss_mat<-marss_dat%>%
 
 
 model=list(
- Q= "unconstrained",#"equalvarcov",
- R= diag(rep(0,nrow(marss_mat))),#"diagonal and equal",
+ Q= "equalvarcov",#"unconstrained",
+ R= diag(rep(0,nrow(marss_mat))),#"diagonal and equal","diagonal and unequal",
  U= matrix(rep(0,nrow(marss_mat)),nrow=nrow(marss_mat),1)
 )
-fit=MARSS(marss_mat, model=model,control=list(maxit=2000))
+fit=MARSS(marss_mat, model=model,control=list(maxit=2000,allow.degen=T))
 
 fitted<-t(fit$states)
 colnames(fitted)<-gsub("X.","mle_",colnames(fitted))
@@ -193,7 +193,7 @@ marss_dat<-marss_dat%>%
               dplyr::select(date,river,flow_cfs)
               )
 
-write.csv(marss_dat,"marss_dat.csv")
+write.csv(marss_dat,"marss_dat.csv",row.names = F)
 ```
 
 ## Plot Flow Data with MARSS Predictions
