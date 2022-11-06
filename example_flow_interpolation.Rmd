@@ -193,7 +193,7 @@ marss_dat<-marss_dat%>%
               dplyr::select(date,river,flow_cfs)
               )
 
-write.csv(marss_dat,"marss_dat.csv",row.names = F)
+write.csv(marss_dat,"marss_dat_scale_log.csv",row.names = F)
 ```
 
 ## Plot Flow Data with MARSS Predictions
